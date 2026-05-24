@@ -1,16 +1,19 @@
 {
-  "name": "Mock Flow 2",
-  "description": "Mock Description 2",
+  "name": "Create order",
+  "description": "Publishes a mock order creation event and waits until the backend records it.",
   "steps": [
     {
-      "name": "step 2",
-      "description": "Mock description 2",
-      "poll_query": "SELECT * FROM users",
+      "name": "Publish order.created",
+      "description": "Sends an order.created message to the mock backend.",
+      "poll_interval": 1000000000,
+      "poll_query": "SELECT EXISTS (SELECT 1 FROM mock_events WHERE flow_step = 'create-order')",
       "message": {
-        "header": {
-
+        "exchange": "rmqiw.mock",
+        "routing_key": "orders.created",
+        "headers": {
+          "flow_step": "create-order"
         },
-        "body": ""
+        "body": "{\"id\":\"order-1\",\"user_id\":\"user-1\",\"total\":42.50}"
       }
     }
   ]

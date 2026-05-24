@@ -1,0 +1,53 @@
+services:
+  rmq:
+    image: rabbitmq:3-management
+    container_name: rmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: rmqiw
+      RABBITMQ_DEFAULT_PASS: rmqiw
+      RABBITMQ_DEFAULT_VHOST: /
+    volumes:
+      - rmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  psql:
+    image: postgres:16
+    container_name: psql
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: rmqiw
+      POSTGRES_PASSWORD: rmqiw
+      POSTGRES_DB: rmqiw
+    volumes:
+      - psql_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rmqiw -d rmqiw"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  mock-backend:
+    build:
+      context: .
+    container_name: mock-backend
+    environment:
+      RMQIW_PATH: /app/rmqiuwpath
+      RMQIW_POSTGRES_HOST: psql
+      RMQIW_RABBITMQ_HOST: rmq
+    depends_on:
+      psql:
+        condition: service_healthy
+      rmq:
+        condition: service_healthy
+
+volumes:
+  rmq_data:
+  psql_data:

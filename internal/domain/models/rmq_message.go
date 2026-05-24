@@ -1,6 +1,8 @@
 package models
 
 type Message struct {
-	Headers map[string]string
-	Body    []byte
+	Exchange   string            `json:"exchange"`
+	RoutingKey string            `json:"routing_key"`
+	Headers    map[string]string `json:"headers"`
+	Body       string            `json:"body"`
 }

@@ -1,16 +1,19 @@
 {
-  "name": "Mock Flow 3",
-  "description": "Mock Description 3",
+  "name": "Capture payment",
+  "description": "Publishes a mock payment capture event and waits until the backend records it.",
   "steps": [
     {
-      "name": "step 3",
-      "description": "Mock description 3",
-      "poll_query": "SELECT * FROM users",
+      "name": "Publish payment.captured",
+      "description": "Sends a payment.captured message to the mock backend.",
+      "poll_interval": 1000000000,
+      "poll_query": "SELECT EXISTS (SELECT 1 FROM mock_events WHERE flow_step = 'capture-payment')",
       "message": {
-        "header": {
-
+        "exchange": "rmqiw.mock",
+        "routing_key": "payments.captured",
+        "headers": {
+          "flow_step": "capture-payment"
         },
-        "body": ""
+        "body": "{\"id\":\"payment-1\",\"order_id\":\"order-1\",\"amount\":42.50}"
       }
     }
   ]

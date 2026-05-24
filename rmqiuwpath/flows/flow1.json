@@ -1,16 +1,19 @@
 {
-  "name": "Mock Flow 1",
-  "description": "Mock Description 1",
+  "name": "Create user",
+  "description": "Publishes a mock user creation event and waits until the backend records it.",
   "steps": [
     {
-      "name": "step 1",
-      "description": "Mock description 1",
-      "poll_query": "SELECT * FROM users",
+      "name": "Publish user.created",
+      "description": "Sends a user.created message to the mock backend.",
+      "poll_interval": 1000000000,
+      "poll_query": "SELECT EXISTS (SELECT 1 FROM mock_events WHERE flow_step = 'create-user')",
       "message": {
-        "header": {
-
+        "exchange": "rmqiw.mock",
+        "routing_key": "users.created",
+        "headers": {
+          "flow_step": "create-user"
         },
-        "body": ""
+        "body": "{\"id\":\"user-1\",\"name\":\"Alice\"}"
       }
     }
   ]

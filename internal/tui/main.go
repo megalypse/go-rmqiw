@@ -2,36 +2,37 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/megalypse/go/rmqiw/internal/tui/colors"
+	"github.com/megalypse/go/rmqiw/internal/tui/components"
+	"github.com/megalypse/go/rmqiw/internal/tui/ui"
 	"github.com/megalypse/go/rmqiw/internal/tui/views"
 )
 
-type TuiInstance struct {
-	view View
-}
-
-func NewModel() (*TuiInstance, error) {
-	return &TuiInstance{}, nil
+func NewModel() (*RootView, error) {
+	return &RootView{}, nil
 
 }
 
-func (m *TuiInstance) Init() tea.Cmd {
+type RootView struct {
+	router tea.Model
+}
+
+func (m *RootView) Init() tea.Cmd {
 	return nil
 }
 
-func (m *TuiInstance) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	return m.view.Update(m, msg)
+func (m *RootView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.router, cmd = m.router.Update(msg)
+
+	return m, cmd
 }
 
-func (m *TuiInstance) View() string {
-	if m.view == nil {
-		m.view = router[views.MainMenu]
+func (m *RootView) View() string {
+	if m.router == nil {
+		m.router = views.NewViewSelectJourney()
 	}
 
-	return lipgloss.NewStyle().Bold(true).Foreground(colors.MainColor).Render("RMQ In Wonderland") + m.view.View(m)
-}
-
-func (m *TuiInstance) SetView(view views.ViewControl) {
-	m.view = router[view]
+	return components.NewTitle("RMQ in Wonderland") +
+		ui.LineBreak +
+		m.router.View()
 }

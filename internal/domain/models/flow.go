@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 type Flow struct {
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
@@ -7,8 +9,9 @@ type Flow struct {
 }
 
 type FlowStep struct {
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Message     Message `json:"message"`
-	PollQuery   string  `json:"poll_query"`
+	Name         string        `json:"name"`
+	Description  string        `json:"description"`
+	Message      Message       `json:"message"`
+	PollInterval time.Duration `json:"poll_interval"`
+	PollQuery    string        `json:"poll_query"`
 }
