@@ -1,180 +1,59 @@
 # RMQIW
 
-RMQIW is an interactive terminal tool for running RabbitMQ-driven workflows and checking their effects in Postgres.
+`RMQIW_PATH` é a principal variável de ambiente da ferramenta. Ela deve apontar para um diretório contendo `config.json` e `flows/`.
 
-Each workflow is a JSON file made of ordered steps. A step publishes one message to RabbitMQ, then repeatedly runs a Postgres query until the query returns `true`. This makes the tool useful for validating event-driven flows end to end.
-
-The repository includes a complete local mock stack:
-
-- RabbitMQ with the management UI
-- Postgres
-- A mock backend that consumes RabbitMQ messages and inserts records into Postgres
-- A sample multi-step journey
-
-## Requirements
-
-- Go, matching the version in `go.mod`
-- Docker and Docker Compose
-- `make`
-
-## Quick Start
-
-Start the local RabbitMQ, Postgres, and mock backend:
-
-```sh
-docker compose up -d --build
+```text
+$RMQIW_PATH/
+  config.json
+  flows/
+    checkout.json
 ```
 
-Create a local RMQIW config directory from the bundled mocks:
-
-```sh
-make init-mocks
-```
-
-Install the CLI:
+## Instalar
 
 ```sh
 make install-cli
-```
-
-Reload your shell so the generated `PATH` and `RMQIW_PATH` exports are available:
-
-```sh
 source ~/.zshrc
 ```
 
-Run the tool:
+Por padrão, a CLI é instalada em `$HOME/.local/bin/rmqiw` e esse diretório é adicionado ao `PATH`.
+
+Sem alterar o shell profile:
 
 ```sh
-rmqiw
-```
-
-If you do not want `make` to update your shell profile, use:
-
-```sh
-make init-mocks UPDATE_SHELL=0
 make install-cli UPDATE_SHELL=0
-export RMQIW_PATH="$HOME/rmqiw"
 export PATH="$HOME/.local/bin:$PATH"
-rmqiw
 ```
 
-## Running Without Installing
-
-You can run directly from the repository:
+Customizando:
 
 ```sh
-docker compose up -d --build
-RMQIW_PATH="$PWD/rmqiuwpath" go run .
+make install-cli APP_NAME=rmqiw INSTALL_DIR="$HOME/bin"
 ```
 
-The repository sample directory is currently named `rmqiuwpath`.
+## Configurar
 
-## Local Services
-
-The Docker Compose stack exposes:
-
-| Service | Address | Credentials |
-| --- | --- | --- |
-| RabbitMQ | `localhost:5672` | `rmqiw` / `rmqiw` |
-| RabbitMQ Management | `http://localhost:15672` | `rmqiw` / `rmqiw` |
-| Postgres | `localhost:5432` | `rmqiw` / `rmqiw` |
-
-The mock backend creates:
-
-- exchange: `rmqiw.mock`
-- queues:
-  - `rmqiw.mock.users`
-  - `rmqiw.mock.orders`
-  - `rmqiw.mock.payments`
-- table: `mock_events`
-
-Check consumed events:
-
-```sh
-docker compose exec psql psql -U rmqiw -d rmqiw -c \
-  "SELECT flow_step, routing_key, body, received_at FROM mock_events ORDER BY id DESC LIMIT 10;"
-```
-
-Stop the stack:
-
-```sh
-docker compose down
-```
-
-Remove persisted RabbitMQ and Postgres volumes:
-
-```sh
-docker compose down -v
-```
-
-## CLI Usage
-
-When you start `rmqiw`, it opens an interactive TUI.
-
-1. Select a journey.
-2. Select a pace.
-3. Watch each step publish a message and wait for the database check.
-
-Available paces:
-
-- `The clock is ticking`: runs all steps continuously.
-- `Step by step`: pauses before each step and continues only after pressing `enter`.
-
-Keys:
-
-| Key | Action |
-| --- | --- |
-| `up` / `down` | Move through menu options |
-| `enter` | Select an option or run the next step |
-| `esc` | Quit |
-
-## Configuration Directory
-
-The app reads its configuration from the directory pointed to by `RMQIW_PATH`.
-
-That directory must contain:
-
-```text
-RMQIW_PATH/
-  config.json
-  flows/
-    any-flow-name.json
-```
-
-Create the sample directory:
+Crie uma estrutura inicial:
 
 ```sh
 make init-mocks
+source ~/.zshrc
 ```
 
-By default this creates:
-
-```text
-$HOME/rmqiw/
-  config.json
-  flows/
-    flow1.json
-```
-
-Use a different directory:
+Por padrão, isso cria `$HOME/rmqiw` e adiciona:
 
 ```sh
-make init-mocks RMQIW_PATH="$HOME/dev/rmqiw-config"
-export RMQIW_PATH="$HOME/dev/rmqiw-config"
+export RMQIW_PATH="$HOME/rmqiw"
 ```
 
-Use a different source template:
+Para outro diretório:
 
 ```sh
-make init-mocks MOCK_SOURCE=./rmqiuwpath RMQIW_PATH="$HOME/rmqiw"
+make init-mocks RMQIW_PATH="$HOME/dev/rmqiw"
+export RMQIW_PATH="$HOME/dev/rmqiw"
 ```
 
 ## `config.json`
-
-`config.json` defines the RabbitMQ and Postgres connections used by the CLI.
-
-Example:
 
 ```json
 {
@@ -196,34 +75,39 @@ Example:
 }
 ```
 
-Environment variables can override connection fields:
+Também é possível sobrescrever conexão por env vars:
 
-| Variable | Field |
-| --- | --- |
-| `RMQIW_POSTGRES_HOST` | `postgres.host` |
-| `RMQIW_POSTGRES_PORT` | `postgres.port` |
-| `RMQIW_POSTGRES_USER` | `postgres.user` |
-| `RMQIW_POSTGRES_PASSWORD` | `postgres.password` |
-| `RMQIW_POSTGRES_DATABASE` | `postgres.database` |
-| `RMQIW_POSTGRES_SSL_MODE` | `postgres.ssl_mode` |
-| `RMQIW_RABBITMQ_HOST` | `rabbitmq.host` |
-| `RMQIW_RABBITMQ_PORT` | `rabbitmq.port` |
-| `RMQIW_RABBITMQ_USER` | `rabbitmq.user` |
-| `RMQIW_RABBITMQ_PASSWORD` | `rabbitmq.password` |
-| `RMQIW_RABBITMQ_VHOST` | `rabbitmq.vhost` |
+```sh
+RMQIW_POSTGRES_HOST=localhost
+RMQIW_POSTGRES_PORT=5432
+RMQIW_POSTGRES_USER=rmqiw
+RMQIW_POSTGRES_PASSWORD=rmqiw
+RMQIW_POSTGRES_DATABASE=rmqiw
+RMQIW_POSTGRES_SSL_MODE=disable
 
-The Docker mock backend uses these overrides to connect to `psql` and `rmq` inside the Compose network while the host CLI keeps using `localhost`.
+RMQIW_RABBITMQ_HOST=localhost
+RMQIW_RABBITMQ_PORT=5672
+RMQIW_RABBITMQ_USER=rmqiw
+RMQIW_RABBITMQ_PASSWORD=rmqiw
+RMQIW_RABBITMQ_VHOST=/
+```
 
-## Flow Files
+## Adicionar Flows
 
-Every `*.json` file inside `RMQIW_PATH/flows` is loaded as a journey.
+Cada `*.json` em `$RMQIW_PATH/flows` vira uma jornada na TUI.
 
-Minimal shape:
+Cada step:
+
+1. publica uma mensagem no RabbitMQ;
+2. executa `poll_query` no Postgres até retornar `true`;
+3. avança para o próximo step.
+
+Exemplo:
 
 ```json
 {
   "name": "User checkout journey",
-  "description": "Publishes user, order, and payment events and waits for each backend record.",
+  "description": "Publishes user, order, and payment events.",
   "steps": [
     {
       "name": "Publish user.created",
@@ -247,261 +131,48 @@ Minimal shape:
 }
 ```
 
-### Step Fields
+Campos do step:
 
-| Field | Meaning |
-| --- | --- |
-| `name` | Label shown in the TUI |
-| `description` | Human-readable context for the step |
-| `poll_interval` | Interval between database checks, in milliseconds |
-| `timeout` | Maximum time to wait for `poll_query` to return `true`, in seconds |
-| `poll_query` | SQL query that must return one boolean column |
-| `message.exchange` | RabbitMQ exchange |
-| `message.routing_key` | RabbitMQ routing key |
-| `message.headers` | RabbitMQ message headers |
-| `message.body` | Message payload |
+- `poll_interval`: intervalo entre polls, em milissegundos.
+- `timeout`: timeout do step, em segundos. Se omitido ou `0`, usa `10`.
+- `poll_query`: query que deve retornar uma coluna booleana.
+- `message.exchange`: exchange RabbitMQ.
+- `message.routing_key`: routing key.
+- `message.headers`: headers da mensagem.
+- `message.body`: payload publicado.
 
-`poll_query` must return a boolean. The usual pattern is:
+`poll_query` normalmente usa `SELECT EXISTS`:
 
 ```sql
 SELECT EXISTS (
   SELECT 1
-  FROM some_table
-  WHERE some_condition = true
+  FROM alguma_tabela
+  WHERE alguma_condicao = true
 )
 ```
 
-If `timeout` is omitted or set to `0`, the tool uses a default timeout of 10 seconds for that step.
+`message.body` aceita qualquer JSON válido: string, objeto, array, número, booleano ou `null`.
 
-`message.body` is a JSON raw message. It can be any JSON value:
-
-```json
-"plain text"
-```
-
-```json
-{"id": "user-1"}
-```
-
-```json
-[1, 2, 3]
-```
-
-```json
-true
-```
-
-```json
-null
-```
-
-The bytes published to RabbitMQ are the raw JSON bytes from the flow file.
-
-## Sample Journey
-
-The bundled sample journey has three steps:
-
-1. Publish `users.created`
-2. Publish `orders.created`
-3. Publish `payments.captured`
-
-The mock backend consumes those messages and inserts records into `mock_events`. Each step waits for its corresponding record before continuing.
-
-Run it continuously:
+## Usar
 
 ```sh
 rmqiw
-# Select "User checkout journey"
-# Select "The clock is ticking"
 ```
 
-Run it manually:
+Na TUI:
 
-```sh
-rmqiw
-# Select "User checkout journey"
-# Select "Step by step"
-# Press enter before each step
-```
+- `up` / `down`: navegar;
+- `enter`: selecionar ou continuar;
+- `esc`: sair.
 
-Verify results:
+Ritmos:
 
-```sh
-docker compose exec psql psql -U rmqiw -d rmqiw -c \
-  "SELECT flow_step, routing_key, body FROM mock_events WHERE flow_step LIKE 'checkout-%' ORDER BY id DESC LIMIT 3;"
-```
+- `The clock is ticking`: executa todos os steps em sequência.
+- `Step by step`: pausa antes de cada step e continua com `enter`.
 
-## Make Targets
-
-Show available targets:
-
-```sh
-make help
-```
-
-Install the CLI:
-
-```sh
-make install-cli
-```
-
-Defaults:
-
-- binary name: `rmqiw`
-- install directory: `$HOME/.local/bin`
-- shell profile: `$HOME/.zshrc`
-
-Customize:
-
-```sh
-make install-cli APP_NAME=rmqiw INSTALL_DIR="$HOME/bin"
-```
-
-Generate mock config files:
-
-```sh
-make init-mocks
-```
-
-Customize:
-
-```sh
-make init-mocks RMQIW_PATH="$HOME/dev/rmqiw"
-```
-
-Disable shell profile updates:
-
-```sh
-make install-cli UPDATE_SHELL=0
-make init-mocks UPDATE_SHELL=0
-```
-
-## Developing
-
-Run tests:
-
-```sh
-go test ./...
-```
-
-Run the CLI from source:
+## Desenvolvimento
 
 ```sh
 RMQIW_PATH="$PWD/rmqiuwpath" go run .
-```
-
-Rebuild the mock backend image:
-
-```sh
-docker compose build mock-backend
-```
-
-View mock backend logs:
-
-```sh
-docker compose logs -f mock-backend
-```
-
-Inspect RabbitMQ queues:
-
-```sh
-docker compose exec rmq rabbitmqctl list_queues name messages consumers
-```
-
-Inspect RabbitMQ bindings:
-
-```sh
-docker compose exec rmq rabbitmqctl list_bindings source_name destination_name routing_key
-```
-
-## Troubleshooting
-
-### `RMQIW_PATH` is not set
-
-The CLI needs `RMQIW_PATH` to point to a directory with `config.json` and `flows/`.
-
-Fix:
-
-```sh
-make init-mocks
-source ~/.zshrc
-```
-
-Or set it manually:
-
-```sh
-export RMQIW_PATH="$PWD/rmqiuwpath"
-```
-
-### Cannot connect to RabbitMQ
-
-Make sure Docker Compose is running:
-
-```sh
-docker compose ps
-```
-
-RabbitMQ should be healthy and expose `5672`.
-
-Check credentials in `config.json`:
-
-```json
-{
-  "rabbitmq": {
-    "host": "localhost",
-    "port": 5672,
-    "user": "rmqiw",
-    "password": "rmqiw",
-    "vhost": "/"
-  }
-}
-```
-
-### Cannot connect to Postgres
-
-Check the service:
-
-```sh
-docker compose ps psql
-```
-
-Check credentials:
-
-```sh
-docker compose exec psql psql -U rmqiw -d rmqiw -c "SELECT 1;"
-```
-
-### A step times out
-
-A step times out when its `poll_query` does not return `true` within the step timeout. Configure this per step with `timeout`, expressed in seconds.
-
-Check:
-
-- the message was routed to the expected queue
-- a consumer is attached to the queue
-- the backend inserted the expected database row
-- the `poll_query` matches the inserted data
-
-Useful commands:
-
-```sh
-docker compose exec rmq rabbitmqctl list_queues name messages consumers
-docker compose logs -f mock-backend
-docker compose exec psql psql -U rmqiw -d rmqiw -c "SELECT * FROM mock_events ORDER BY id DESC LIMIT 10;"
-```
-
-### Shell profile was not updated
-
-Use the exports printed by `make`:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-export RMQIW_PATH="$HOME/rmqiw"
-```
-
-Or rerun with an explicit profile:
-
-```sh
-make install-cli SHELL_PROFILE="$HOME/.bashrc"
-make init-mocks SHELL_PROFILE="$HOME/.bashrc"
+go test ./...
 ```
