@@ -1,4 +1,5 @@
 # RMQIW
+RMQ in Wonderland
 
 `RMQIW_PATH` é a principal variável de ambiente da ferramenta. Ela deve apontar para um diretório contendo `config.json` e `flows/`.
 
