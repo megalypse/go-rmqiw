@@ -14,60 +14,61 @@ import (
 	"github.com/megalypse/go/rmqiw/internal/tui/ui"
 )
 
-func NewStartJourneyContinuous(selectedFlow int) tea.Model {
+func NewStartJourneyStepByStep(selectedFlow int) tea.Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	stepChan := make(chan stepReport, 1)
 
-	return &StartJourneyContinuous{
+	return &StartJourneyStepByStep{
 		selectedFlow: selectedFlow,
 		spinner:      s,
 		ctx:          context.Background(),
-		stepChan:     stepChan,
+		stepChan:     make(chan stepReport, 1),
 	}
 }
 
-type stepReport struct {
-	stepNum int
-	err     error
-}
-
-type StartJourneyContinuous struct {
+type StartJourneyStepByStep struct {
 	selectedFlow int
 	spinner      spinner.Model
 	ctx          context.Context
 	stepChan     chan stepReport
 	currentStep  int
-	allDone      bool
+	running      bool
 	err          error
 }
 
-func (s *StartJourneyContinuous) Init() tea.Cmd {
-	go s.runSteps(s.ctx, s.stepChan)
-
-	return tea.Batch(s.spinner.Tick, waitForStepReport(s.stepChan))
+func (s *StartJourneyStepByStep) Init() tea.Cmd {
+	return s.spinner.Tick
 }
 
-func (s *StartJourneyContinuous) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (s *StartJourneyStepByStep) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
 	case stepReport:
+		s.running = false
 		if msg.err != nil {
 			s.err = msg.err
 			return s, nil
 		}
 
 		s.currentStep = msg.stepNum + 1
-		return s, waitForStepReport(s.stepChan)
+		return s, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
 			return s, tea.Quit
-		default:
-			if s.allDone {
+		case "enter":
+			if s.err != nil || s.done() {
 				return NewViewSelectJourney(), nil
 			}
+
+			if s.running {
+				return s, nil
+			}
+
+			s.running = true
+			go s.runCurrentStep(s.ctx, s.stepChan)
+			return s, waitForStepReport(s.stepChan)
 		}
 	}
 
@@ -75,7 +76,7 @@ func (s *StartJourneyContinuous) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return s, cmd
 }
 
-func (s *StartJourneyContinuous) View() string {
+func (s *StartJourneyStepByStep) View() string {
 	render := strings.Builder{}
 
 	spinnerIcon := lipgloss.NewStyle().Foreground(colors.MainColor).Render(s.spinner.View())
@@ -85,18 +86,21 @@ func (s *StartJourneyContinuous) View() string {
 	flows, _ := cfg.GetFlows()
 	flow := flows[s.selectedFlow]
 
-	if s.currentStep == len(flow.Steps) {
+	if s.done() {
 		render.WriteString(successIcon + " Journey completed!")
 	} else if s.err != nil {
 		render.WriteString(errorIcon + " Journey failed!")
+	} else if s.running {
+		render.WriteString(spinnerIcon + " Step in progress...")
 	} else {
-		render.WriteString(spinnerIcon + " Journey in progress...")
+		render.WriteString("Paused. Press enter to run the next step.")
 	}
 
 	render.WriteString(ui.LineSkip)
 
 	for i, step := range flow.Steps {
-		if s.err != nil {
+		if s.err != nil && i == s.currentStep {
+			render.WriteString(errorIcon + " " + step.Name + ui.LineBreak)
 			render.WriteString(errorIcon + " " + s.err.Error() + ui.LineBreak)
 			break
 		}
@@ -105,59 +109,50 @@ func (s *StartJourneyContinuous) View() string {
 			render.WriteString(successIcon + " " + step.Name + ui.LineBreak)
 		}
 
-		if i == s.currentStep {
+		if i == s.currentStep && s.running {
 			render.WriteString(spinnerIcon + " " + step.Name + ui.LineBreak)
 		}
 
+		if i == s.currentStep && !s.running && s.err == nil {
+			render.WriteString("○ " + step.Name + ui.LineBreak)
+		}
+
 		if i > s.currentStep {
-			render.WriteString("○" + " " + step.Name + ui.LineBreak)
+			render.WriteString("○ " + step.Name + ui.LineBreak)
 		}
 	}
 
-	if s.allDone {
-		render.WriteString(ui.LineSkip + "Press any key to go back to the main menu.")
+	if s.err != nil || s.done() {
+		render.WriteString(ui.LineSkip + "Press enter to go back to the main menu.")
 	}
 
 	return render.String()
 }
 
-func waitForStepReport(reportChan <-chan stepReport) tea.Cmd {
-	return func() tea.Msg {
-		report, ok := <-reportChan
-		if !ok {
-			return nil
-		}
-
-		return report
-	}
+func (s *StartJourneyStepByStep) done() bool {
+	flows, _ := cfg.GetFlows()
+	flow := flows[s.selectedFlow]
+	return s.currentStep == len(flow.Steps)
 }
 
-func (s *StartJourneyContinuous) runSteps(ctx context.Context, reportChan chan<- stepReport) {
-	defer func() { s.allDone = true }()
-	defer close(reportChan)
+func (s *StartJourneyStepByStep) runCurrentStep(ctx context.Context, reportChan chan<- stepReport) {
+	stepNum := s.currentStep
 
 	flows, _ := cfg.GetFlows()
 	flow := flows[s.selectedFlow]
 
 	rmq, err := publisher.GetRmq()
 	if err != nil {
-		reportChan <- stepReport{err: err}
+		reportChan <- stepReport{stepNum: stepNum, err: err}
 		return
 	}
 
 	poller, err := poller2.GetPsql(ctx)
 	if err != nil {
-		reportChan <- stepReport{err: err}
+		reportChan <- stepReport{stepNum: stepNum, err: err}
 		return
 	}
 
-	for i, step := range flow.Steps {
-		if err := runJourneyStep(ctx, step, rmq, poller); err != nil {
-			reportChan <- stepReport{stepNum: i, err: err}
-			return
-		}
-
-		reportChan <- stepReport{stepNum: i, err: nil}
-
-	}
+	err = runJourneyStep(ctx, flow.Steps[stepNum], rmq, poller)
+	reportChan <- stepReport{stepNum: stepNum, err: err}
 }

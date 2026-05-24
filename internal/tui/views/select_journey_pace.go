@@ -36,7 +36,12 @@ func (v ViewSelectJourneyPace) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "down":
 			v.options.Cursor.Up()
 		case "enter":
-			next := NewStartJourneyContinuous(v.selectedFlow)
+			if v.options.Cursor.Cursor() == 0 {
+				next := NewStartJourneyContinuous(v.selectedFlow)
+				return next, next.Init()
+			}
+
+			next := NewStartJourneyStepByStep(v.selectedFlow)
 			return next, next.Init()
 		}
 	}
