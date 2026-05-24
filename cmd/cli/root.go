@@ -14,7 +14,7 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "rmq",
+	Use:   "",
 	Short: "Interactive RQM workflow runner",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := setup(); err != nil {
