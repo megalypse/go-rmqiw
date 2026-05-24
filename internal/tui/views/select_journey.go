@@ -44,6 +44,11 @@ func (v ViewSelectJourney) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (v ViewSelectJourney) View() string {
+	flows, _ := cfg.GetFlows()
+	if len(flows) == 0 {
+		return "No journeys found. Please add some journey files to the flows directory."
+	}
+
 	return "Select a journey:" +
 		ui.LineSkip +
 		v.flowsList.Render()

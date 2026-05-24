@@ -3,7 +3,7 @@
     "host": "localhost",
     "port": 5432,
     "user": "rmqiw",
-    "password": "rmqiw",
+    "password": "rmqiww",
     "database": "rmqiw",
     "ssl_mode": "disable"
   },
