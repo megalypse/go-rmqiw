@@ -1,19 +1,47 @@
 {
-  "name": "Create user",
-  "description": "Publishes a mock user creation event and waits until the backend records it.",
+  "name": "User checkout journey",
+  "description": "Publishes user, order, and payment events and waits for each backend record.",
   "steps": [
     {
       "name": "Publish user.created",
       "description": "Sends a user.created message to the mock backend.",
-      "poll_interval": 1000000000,
-      "poll_query": "SELECT EXISTS (SELECT 1 FROM mock_events WHERE flow_step = 'create-user')",
+      "poll_interval": 100,
+      "poll_query": "SELECT EXISTS (SELECT 1 FROM mock_events WHERE flow_step = 'checkout-create-user')",
       "message": {
         "exchange": "rmqiw.mock",
         "routing_key": "users.created",
         "headers": {
-          "flow_step": "create-user"
+          "flow_step": "checkout-create-user"
         },
-        "body": "{\"id\":\"user-1\",\"name\":\"Alice\"}"
+        "body": {"id":"user-1","name": "Alice"}
+      }
+    },
+    {
+      "name": "Publish order.created",
+      "description": "Sends an order.created message to the mock backend.",
+      "poll_interval": 100,
+      "poll_query": "SELECT EXISTS (SELECT 1 FROM mock_events WHERE flow_step = 'checkout-create-order')",
+      "message": {
+        "exchange": "rmqiw.mock",
+        "routing_key": "orders.created",
+        "headers": {
+          "flow_step": "checkout-create-order"
+        },
+        "body": {"id":"order-1","user_id":"user-1","total":42.50}
+      }
+    },
+    {
+      "name": "Publish payment.captured",
+      "description": "Sends a payment.captured message to the mock backend.",
+      "poll_interval": 100,
+      "poll_query": "SELECT EXISTS (SELECT 1 FROM mock_events WHERE flow_step = 'checkout-capture-payment')",
+      "message": {
+        "exchange": "rmqiw.mock",
+        "routing_key": "payments.captured",
+        "headers": {
+          "flow_step": "checkout-capture-payment"
+        },
+        "body": {"id":"payment-1","order_id":"order-1","amount":42.50}
       }
     }
   ]

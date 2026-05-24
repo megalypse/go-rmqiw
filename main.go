@@ -1,7 +1,9 @@
 package main
 
-import "github.com/megalypse/go/rmqiw/cmd"
+import (
+	"github.com/megalypse/go/rmqiw/cmd/cli"
+)
 
 func main() {
-	cmd.Execute()
+	cli.Execute()
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/megalypse/go/rmqiw/internal/cfg"
 	poller2 "github.com/megalypse/go/rmqiw/internal/domain/impl/poller"
 	"github.com/megalypse/go/rmqiw/internal/domain/impl/publisher"
+	"github.com/megalypse/go/rmqiw/internal/tui/colors"
 	"github.com/megalypse/go/rmqiw/internal/tui/ui"
 )
 
@@ -72,6 +73,8 @@ func (s *StartJourneyContinuous) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (s *StartJourneyContinuous) View() string {
 	render := strings.Builder{}
+	render.WriteString("Journey in progress..." + ui.LineSkip)
+
 	flows, _ := cfg.GetFlows()
 	flow := flows[s.selectedFlow]
 
@@ -83,15 +86,17 @@ func (s *StartJourneyContinuous) View() string {
 		}
 
 		if i < s.currentStep {
-			render.WriteString("✓ " + step.Name + ui.LineBreak)
+			successIcon := lipgloss.NewStyle().Foreground(colors.SuccessGreen).Render("✓")
+			render.WriteString(successIcon + " " + step.Name + ui.LineBreak)
 		}
 
 		if i == s.currentStep {
-			render.WriteString(s.spinner.View() + " " + step.Name + ui.LineBreak)
+			spinnerIcon := lipgloss.NewStyle().Foreground(colors.MainColor).Render(s.spinner.View())
+			render.WriteString(spinnerIcon + " " + step.Name + ui.LineBreak)
 		}
 
 		if i > s.currentStep {
-			render.WriteString("  " + step.Name + ui.LineBreak)
+			render.WriteString("○" + " " + step.Name + ui.LineBreak)
 		}
 	}
 
@@ -133,13 +138,13 @@ func (s *StartJourneyContinuous) runSteps(ctx context.Context, reportChan chan<-
 			step.Message.Exchange,
 			step.Message.RoutingKey,
 			step.Message.Headers,
-			[]byte(step.Message.Body),
+			step.Message.Body,
 		); err != nil {
 			reportChan <- stepReport{stepNum: i, err: err}
 			return
 		}
 
-		ticker := time.NewTicker(step.PollInterval)
+		ticker := time.NewTicker(step.PollInterval * time.Millisecond)
 		timeout := time.NewTimer(10 * time.Second)
 		stepDone := false
 
