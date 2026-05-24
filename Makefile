@@ -1,4 +1,4 @@
-APP_NAME ?= rmq
+APP_NAME ?= rmqiw
 INSTALL_DIR ?= $(HOME)/.local/bin
 MOCK_SOURCE ?= rmqiuwpath
 RMQIW_PATH ?= $(HOME)/rmqiw
