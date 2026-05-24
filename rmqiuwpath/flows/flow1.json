@@ -6,6 +6,7 @@
       "name": "Publish user.created",
       "description": "Sends a user.created message to the mock backend.",
       "poll_interval": 100,
+      "timeout": 10,
       "poll_query": "SELECT EXISTS (SELECT 1 FROM mock_events WHERE flow_step = 'checkout-create-user')",
       "message": {
         "exchange": "rmqiw.mock",
@@ -20,6 +21,7 @@
       "name": "Publish order.created",
       "description": "Sends an order.created message to the mock backend.",
       "poll_interval": 100,
+      "timeout": 10,
       "poll_query": "SELECT EXISTS (SELECT 1 FROM mock_events WHERE flow_step = 'checkout-create-order')",
       "message": {
         "exchange": "rmqiw.mock",
@@ -34,6 +36,7 @@
       "name": "Publish payment.captured",
       "description": "Sends a payment.captured message to the mock backend.",
       "poll_interval": 100,
+      "timeout": 10,
       "poll_query": "SELECT EXISTS (SELECT 1 FROM mock_events WHERE flow_step = 'checkout-capture-payment')",
       "message": {
         "exchange": "rmqiw.mock",

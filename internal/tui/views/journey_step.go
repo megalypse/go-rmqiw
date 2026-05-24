@@ -25,7 +25,7 @@ func runJourneyStep(
 	}
 
 	ticker := time.NewTicker(step.PollInterval * time.Millisecond)
-	timeout := time.NewTimer(10 * time.Second)
+	timeout := time.NewTimer(stepTimeout(step))
 	defer ticker.Stop()
 	defer timeout.Stop()
 
@@ -46,4 +46,12 @@ func runJourneyStep(
 			}
 		}
 	}
+}
+
+func stepTimeout(step models.FlowStep) time.Duration {
+	if step.Timeout == 0 {
+		return 10 * time.Second
+	}
+
+	return step.Timeout * time.Second
 }

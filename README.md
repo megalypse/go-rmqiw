@@ -229,6 +229,7 @@ Minimal shape:
       "name": "Publish user.created",
       "description": "Sends a user.created message.",
       "poll_interval": 100,
+      "timeout": 10,
       "poll_query": "SELECT EXISTS (SELECT 1 FROM mock_events WHERE flow_step = 'checkout-create-user')",
       "message": {
         "exchange": "rmqiw.mock",
@@ -253,6 +254,7 @@ Minimal shape:
 | `name` | Label shown in the TUI |
 | `description` | Human-readable context for the step |
 | `poll_interval` | Interval between database checks, in milliseconds |
+| `timeout` | Maximum time to wait for `poll_query` to return `true`, in seconds |
 | `poll_query` | SQL query that must return one boolean column |
 | `message.exchange` | RabbitMQ exchange |
 | `message.routing_key` | RabbitMQ routing key |
@@ -268,6 +270,8 @@ SELECT EXISTS (
   WHERE some_condition = true
 )
 ```
+
+If `timeout` is omitted or set to `0`, the tool uses a default timeout of 10 seconds for that step.
 
 `message.body` is a JSON raw message. It can be any JSON value:
 
@@ -469,7 +473,7 @@ docker compose exec psql psql -U rmqiw -d rmqiw -c "SELECT 1;"
 
 ### A step times out
 
-A step times out when its `poll_query` does not return `true` within the step timeout.
+A step times out when its `poll_query` does not return `true` within the step timeout. Configure this per step with `timeout`, expressed in seconds.
 
 Check:
 
