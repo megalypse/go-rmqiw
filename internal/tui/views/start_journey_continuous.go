@@ -73,25 +73,35 @@ func (s *StartJourneyContinuous) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (s *StartJourneyContinuous) View() string {
 	render := strings.Builder{}
-	render.WriteString("Journey in progress..." + ui.LineSkip)
+
+	spinnerIcon := lipgloss.NewStyle().Foreground(colors.MainColor).Render(s.spinner.View())
+	successIcon := lipgloss.NewStyle().Foreground(colors.SuccessGreen).Render("✓")
+	errorIcon := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render("✗")
 
 	flows, _ := cfg.GetFlows()
 	flow := flows[s.selectedFlow]
 
+	if s.currentStep == len(flow.Steps) {
+		render.WriteString(successIcon + " Journey completed!")
+	} else if s.err != nil {
+		render.WriteString(errorIcon + " Journey failed!")
+	} else {
+		render.WriteString(spinnerIcon + " Journey in progress...")
+	}
+
+	render.WriteString(ui.LineSkip)
+
 	for i, step := range flow.Steps {
 		if s.err != nil {
-			render.WriteString("✗ " + step.Name + ui.LineBreak)
-			render.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(s.err.Error()) + ui.LineBreak)
+			render.WriteString(errorIcon + " " + s.err.Error() + ui.LineBreak)
 			break
 		}
 
 		if i < s.currentStep {
-			successIcon := lipgloss.NewStyle().Foreground(colors.SuccessGreen).Render("✓")
 			render.WriteString(successIcon + " " + step.Name + ui.LineBreak)
 		}
 
 		if i == s.currentStep {
-			spinnerIcon := lipgloss.NewStyle().Foreground(colors.MainColor).Render(s.spinner.View())
 			render.WriteString(spinnerIcon + " " + step.Name + ui.LineBreak)
 		}
 
@@ -106,6 +116,8 @@ func (s *StartJourneyContinuous) View() string {
 func waitForStepReport(reportChan <-chan stepReport) tea.Cmd {
 	return func() tea.Msg {
 		report, ok := <-reportChan
+
+		// TODO: do not quit on channel close, but rather return a specific message that indicates completion
 		if !ok {
 			return tea.Quit()
 		}
