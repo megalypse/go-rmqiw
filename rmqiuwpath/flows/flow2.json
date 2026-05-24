@@ -1,0 +1,17 @@
+{
+  "name": "Mock Flow 2",
+  "description": "Mock Description 2",
+  "steps": [
+    {
+      "name": "step 2",
+      "description": "Mock description 2",
+      "poll_query": "SELECT * FROM users",
+      "message": {
+        "header": {
+
+        },
+        "body": ""
+      }
+    }
+  ]
+}
