@@ -154,6 +154,35 @@ SELECT EXISTS (
 
 `message.body` aceita qualquer JSON válido: string, objeto, array, número, booleano ou `null`.
 
+### Variáveis geradas
+
+Flows podem declarar variáveis geradas na raiz do arquivo:
+
+```json
+{
+  "name": "User checkout journey",
+  "vars": {
+    "requestId": "uuid()"
+  },
+  "steps": [
+    {
+      "poll_query": "SELECT EXISTS (SELECT 1 FROM events WHERE request_id = '{{requestId}}')",
+      "message": {
+        "headers": {
+          "x-request-id": "{{requestId}}"
+        },
+        "body": {
+          "id": "{{requestId}}"
+        }
+      }
+    }
+  ]
+}
+```
+
+O sufixo `()` indica uma chamada de função geradora. O valor gerado pode ser usado com `{{nomeDaVar}}` em `message.body`, `message.headers` e `poll_query`. A função disponível inicialmente é `uuid()`.
+Também é aceito declarar a variável diretamente na raiz, por exemplo `"requestId": "uuid()"`.
+
 ## Usar
 
 ```sh
