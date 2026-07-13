@@ -1,8 +1,10 @@
 package cfg
 
 type Config struct {
-	Postgres PostgresConfig `json:"postgres"`
-	RabbitMQ RabbitMQConfig `json:"rabbitmq"`
+	Postgres  PostgresConfig `json:"postgres"`
+	RabbitMQ  RabbitMQConfig `json:"rabbitmq"`
+	Vars      map[string]any `json:"vars"`
+	Variables map[string]any `json:"variables"`
 }
 
 type PostgresConfig struct {

@@ -21,7 +21,7 @@ var GetCfg = sync.OnceValues(loadCfg)
 var GetFlows = sync.OnceValues(loadFlows)
 var getPaths = sync.OnceValues(loadPaths)
 
-var generatorFns = map[string]func() string{
+var generatorFns = map[string]func() any{
 	"uuid": generateUUID,
 }
 
@@ -32,6 +32,16 @@ func loadFlows() ([]*models.Flow, error) {
 	}
 
 	entries, err := os.ReadDir(paths.flowsPath)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg, err := GetCfg()
+	if err != nil {
+		return nil, err
+	}
+
+	globalValues, err := evaluateVariables(configVariables(cfg))
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +63,7 @@ func loadFlows() ([]*models.Flow, error) {
 			return nil, err
 		}
 
-		if err := applyGeneratedVariables(flowFile, &flow); err != nil {
+		if err := applyVariables(flowFile, &flow, globalValues); err != nil {
 			return nil, err
 		}
 
@@ -63,33 +73,49 @@ func loadFlows() ([]*models.Flow, error) {
 	return flows, nil
 }
 
-func applyGeneratedVariables(flowFile []byte, flow *models.Flow) error {
-	generators, err := flowGeneratorDefinitions(flowFile, flow)
+func applyVariables(flowFile []byte, flow *models.Flow, globalValues map[string]any) error {
+	flowVars, err := flowVariableDefinitions(flowFile, flow)
 	if err != nil {
 		return err
 	}
 
-	values := make(map[string]string, len(generators))
-	for name, expression := range generators {
-		value, err := evaluateGenerator(expression)
-		if err != nil {
-			return fmt.Errorf("failed to generate %q: %w", name, err)
-		}
-
+	values := make(map[string]any, len(globalValues)+len(flowVars))
+	for name, value := range globalValues {
 		values[name] = value
 	}
 
-	replaceFlowVars(flow, values)
+	flowValues, err := evaluateVariables(flowVars)
+	if err != nil {
+		return err
+	}
+	for name, value := range flowValues {
+		values[name] = value
+	}
+
+	if err := replaceFlowVars(flow, values); err != nil {
+		return err
+	}
 	return nil
 }
 
-func flowGeneratorDefinitions(flowFile []byte, flow *models.Flow) (map[string]string, error) {
-	generators := make(map[string]string)
-	for name, expression := range flow.Vars {
-		generators[name] = expression
+func configVariables(cfg *Config) map[string]any {
+	vars := make(map[string]any, len(cfg.Vars)+len(cfg.Variables))
+	for name, value := range cfg.Vars {
+		vars[name] = value
 	}
-	for name, expression := range flow.Variables {
-		generators[name] = expression
+	for name, value := range cfg.Variables {
+		vars[name] = value
+	}
+	return vars
+}
+
+func flowVariableDefinitions(flowFile []byte, flow *models.Flow) (map[string]any, error) {
+	vars := make(map[string]any)
+	for name, value := range flow.Vars {
+		vars[name] = value
+	}
+	for name, value := range flow.Variables {
+		vars[name] = value
 	}
 
 	var rawRoot map[string]json.RawMessage
@@ -102,16 +128,14 @@ func flowGeneratorDefinitions(flowFile []byte, flow *models.Flow) (map[string]st
 			continue
 		}
 
-		var expression string
-		if err := json.Unmarshal(rawValue, &expression); err != nil {
-			continue
+		var value any
+		if err := json.Unmarshal(rawValue, &value); err != nil {
+			return nil, err
 		}
-		if isGeneratorCall(expression) {
-			generators[name] = expression
-		}
+		vars[name] = value
 	}
 
-	return generators, nil
+	return vars, nil
 }
 
 func isKnownFlowField(name string) bool {
@@ -123,7 +147,29 @@ func isKnownFlowField(name string) bool {
 	}
 }
 
-func evaluateGenerator(expression string) (string, error) {
+func evaluateVariables(vars map[string]any) (map[string]any, error) {
+	values := make(map[string]any, len(vars))
+	for name, value := range vars {
+		evaluatedValue, err := evaluateVariable(value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to evaluate variable %q: %w", name, err)
+		}
+
+		values[name] = evaluatedValue
+	}
+	return values, nil
+}
+
+func evaluateVariable(value any) (any, error) {
+	expression, ok := value.(string)
+	if !ok {
+		return value, nil
+	}
+
+	return evaluateGenerator(expression)
+}
+
+func evaluateGenerator(expression string) (any, error) {
 	if !isGeneratorCall(expression) {
 		return expression, nil
 	}
@@ -141,9 +187,9 @@ func isGeneratorCall(expression string) bool {
 	return strings.HasSuffix(expression, "()") && len(expression) > len("()")
 }
 
-func replaceFlowVars(flow *models.Flow, values map[string]string) {
+func replaceFlowVars(flow *models.Flow, values map[string]any) error {
 	if len(values) == 0 {
-		return
+		return nil
 	}
 
 	for stepIndex := range flow.Steps {
@@ -154,19 +200,88 @@ func replaceFlowVars(flow *models.Flow, values map[string]string) {
 			step.Message.Headers[key] = replaceVars(value, values)
 		}
 
-		step.Message.Body = json.RawMessage(replaceVars(string(step.Message.Body), values))
+		body, err := replaceBodyVars(step.Message.Body, values)
+		if err != nil {
+			return err
+		}
+		step.Message.Body = body
 	}
+
+	return nil
 }
 
-func replaceVars(value string, values map[string]string) string {
+func replaceVars(value string, values map[string]any) string {
 	for name, generatedValue := range values {
-		value = strings.ReplaceAll(value, "{{"+name+"}}", generatedValue)
+		value = strings.ReplaceAll(value, "{{"+name+"}}", stringifyVariable(generatedValue))
 	}
 
 	return value
 }
 
-func generateUUID() string {
+func replaceBodyVars(body json.RawMessage, values map[string]any) (json.RawMessage, error) {
+	if len(body) == 0 {
+		return body, nil
+	}
+
+	var parsed any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, err
+	}
+
+	replaced := replaceJSONVars(parsed, values)
+	replacedBody, err := json.Marshal(replaced)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.RawMessage(replacedBody), nil
+}
+
+func replaceJSONVars(value any, values map[string]any) any {
+	switch typedValue := value.(type) {
+	case map[string]any:
+		for key, nestedValue := range typedValue {
+			typedValue[key] = replaceJSONVars(nestedValue, values)
+		}
+		return typedValue
+	case []any:
+		for index, nestedValue := range typedValue {
+			typedValue[index] = replaceJSONVars(nestedValue, values)
+		}
+		return typedValue
+	case string:
+		if name, ok := variableName(typedValue); ok {
+			if variableValue, exists := values[name]; exists {
+				return variableValue
+			}
+		}
+		return replaceVars(typedValue, values)
+	default:
+		return value
+	}
+}
+
+func variableName(value string) (string, bool) {
+	if !strings.HasPrefix(value, "{{") || !strings.HasSuffix(value, "}}") {
+		return "", false
+	}
+
+	name := strings.TrimSuffix(strings.TrimPrefix(value, "{{"), "}}")
+	return name, name != ""
+}
+
+func stringifyVariable(value any) string {
+	switch typedValue := value.(type) {
+	case string:
+		return typedValue
+	case nil:
+		return ""
+	default:
+		return fmt.Sprint(typedValue)
+	}
+}
+
+func generateUUID() any {
 	var bytes [16]byte
 	if _, err := rand.Read(bytes[:]); err != nil {
 		panic(fmt.Errorf("failed to generate uuid: %w", err))

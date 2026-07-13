@@ -35,7 +35,7 @@ func TestApplyGeneratedVariablesFromVars(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := applyGeneratedVariables(flowFile, &flow); err != nil {
+	if err := applyVariables(flowFile, &flow, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,7 +82,7 @@ func TestApplyGeneratedVariablesFromRootField(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := applyGeneratedVariables(flowFile, &flow); err != nil {
+	if err := applyVariables(flowFile, &flow, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -105,8 +105,136 @@ func TestApplyGeneratedVariablesRejectsUnknownFunction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := applyGeneratedVariables(flowFile, &flow); err == nil {
+	if err := applyVariables(flowFile, &flow, nil); err == nil {
 		t.Fatal("expected unknown generator error")
+	}
+}
+
+func TestApplyVariablesPreservesBodyValueTypes(t *testing.T) {
+	flowFile := []byte(`{
+		"name": "Typed vars",
+		"vars": {
+			"retryCount": 3,
+			"enabled": true,
+			"metadata": {"source": "flow"}
+		},
+		"steps": [
+			{
+				"message": {
+					"headers": {
+						"x-retry-count": "{{retryCount}}"
+					},
+					"body": {
+						"retry_count": "{{retryCount}}",
+						"enabled": "{{enabled}}",
+						"metadata": "{{metadata}}",
+						"label": "retry-{{retryCount}}"
+					}
+				}
+			}
+		]
+	}`)
+
+	var flow models.Flow
+	if err := json.Unmarshal(flowFile, &flow); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := applyVariables(flowFile, &flow, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if flow.Steps[0].Message.Headers["x-retry-count"] != "3" {
+		t.Fatalf("expected stringified header, got %q", flow.Steps[0].Message.Headers["x-retry-count"])
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(flow.Steps[0].Message.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+
+	if body["retry_count"] != float64(3) {
+		t.Fatalf("expected numeric retry_count, got %#v", body["retry_count"])
+	}
+	if body["enabled"] != true {
+		t.Fatalf("expected boolean enabled, got %#v", body["enabled"])
+	}
+	if body["label"] != "retry-3" {
+		t.Fatalf("expected interpolated label, got %#v", body["label"])
+	}
+	metadata, ok := body["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected object metadata, got %#v", body["metadata"])
+	}
+	if metadata["source"] != "flow" {
+		t.Fatalf("expected metadata source, got %#v", metadata["source"])
+	}
+}
+
+func TestApplyVariablesUsesGlobalVariables(t *testing.T) {
+	flowFile := []byte(`{
+		"name": "Global vars",
+		"steps": [
+			{
+				"poll_query": "SELECT '{{tenantId}}'",
+				"message": {
+					"headers": {
+						"x-tenant-id": "{{tenantId}}"
+					},
+					"body": {"tenant_id": "{{tenantId}}"}
+				}
+			}
+		]
+	}`)
+
+	var flow models.Flow
+	if err := json.Unmarshal(flowFile, &flow); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := applyVariables(flowFile, &flow, map[string]any{"tenantId": "tenant-1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if flow.Steps[0].PollQuery != "SELECT 'tenant-1'" {
+		t.Fatalf("expected global value in poll query, got %q", flow.Steps[0].PollQuery)
+	}
+	if flow.Steps[0].Message.Headers["x-tenant-id"] != "tenant-1" {
+		t.Fatalf("expected global value in header, got %q", flow.Steps[0].Message.Headers["x-tenant-id"])
+	}
+}
+
+func TestFlowVariablesOverrideGlobalVariables(t *testing.T) {
+	flowFile := []byte(`{
+		"name": "Override vars",
+		"vars": {
+			"tenantId": "tenant-flow"
+		},
+		"steps": [
+			{
+				"message": {
+					"body": {"tenant_id": "{{tenantId}}"}
+				}
+			}
+		]
+	}`)
+
+	var flow models.Flow
+	if err := json.Unmarshal(flowFile, &flow); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := applyVariables(flowFile, &flow, map[string]any{"tenantId": "tenant-global"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var body map[string]string
+	if err := json.Unmarshal(flow.Steps[0].Message.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+
+	if body["tenant_id"] != "tenant-flow" {
+		t.Fatalf("expected flow variable to override global variable, got %q", body["tenant_id"])
 	}
 }
 

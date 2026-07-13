@@ -58,6 +58,9 @@ export RMQIW_PATH="$HOME/dev/rmqiw"
 
 ```json
 {
+  "vars": {
+    "tenantId": "tenant-1"
+  },
   "postgres": {
     "host": "localhost",
     "port": 5432,
@@ -162,17 +165,22 @@ Flows podem declarar variáveis geradas na raiz do arquivo:
 {
   "name": "User checkout journey",
   "vars": {
-    "requestId": "uuid()"
+    "requestId": "uuid()",
+    "tenantId": "tenant-1",
+    "retryCount": 3
   },
   "steps": [
     {
-      "poll_query": "SELECT EXISTS (SELECT 1 FROM events WHERE request_id = '{{requestId}}')",
+      "poll_query": "SELECT EXISTS (SELECT 1 FROM events WHERE request_id = '{{requestId}}' AND tenant_id = '{{tenantId}}')",
       "message": {
         "headers": {
-          "x-request-id": "{{requestId}}"
+          "x-request-id": "{{requestId}}",
+          "x-tenant-id": "{{tenantId}}"
         },
         "body": {
-          "id": "{{requestId}}"
+          "id": "{{requestId}}",
+          "tenant_id": "{{tenantId}}",
+          "retry_count": "{{retryCount}}"
         }
       }
     }
@@ -180,7 +188,9 @@ Flows podem declarar variáveis geradas na raiz do arquivo:
 }
 ```
 
-O sufixo `()` indica uma chamada de função geradora. O valor gerado pode ser usado com `{{nomeDaVar}}` em `message.body`, `message.headers` e `poll_query`. A função disponível inicialmente é `uuid()`.
+O sufixo `()` indica uma chamada de função geradora. Valores sem `()` são literais hardcoded e podem ser strings, números, booleanos, objetos, arrays ou `null`.
+As mesmas variáveis também podem ser definidas globalmente no `config.json` usando `vars`; variáveis do flow sobrescrevem variáveis globais com o mesmo nome.
+O valor pode ser usado com `{{nomeDaVar}}` em `message.body`, `message.headers` e `poll_query`. Quando um campo do body é exatamente `{{nomeDaVar}}`, o tipo original é preservado. A função disponível inicialmente é `uuid()`.
 Também é aceito declarar a variável diretamente na raiz, por exemplo `"requestId": "uuid()"`.
 
 ## Usar
