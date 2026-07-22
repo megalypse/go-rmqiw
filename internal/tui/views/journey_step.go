@@ -4,9 +4,19 @@ import (
 	"context"
 	"time"
 
+	"github.com/megalypse/go/rmqiw/internal/cfg"
 	"github.com/megalypse/go/rmqiw/internal/domain/interfaces"
 	"github.com/megalypse/go/rmqiw/internal/domain/models"
 )
+
+func resolveSelectedFlow(selectedFlow int) (*models.Flow, error) {
+	flows, err := cfg.GetFlows()
+	if err != nil {
+		return nil, err
+	}
+
+	return cfg.ResolveFlow(flows[selectedFlow])
+}
 
 func runJourneyStep(
 	ctx context.Context,

@@ -1,10 +1,13 @@
 package cfg
 
 import (
+	"context"
 	"encoding/json"
+	"math/big"
 	"regexp"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/megalypse/go/rmqiw/internal/domain/models"
 )
 
@@ -35,7 +38,7 @@ func TestApplyGeneratedVariablesFromVars(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := applyVariables(flowFile, &flow, nil); err != nil {
+	if err := applyVariablesForTest(flowFile, &flow, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,7 +85,7 @@ func TestApplyGeneratedVariablesFromRootField(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := applyVariables(flowFile, &flow, nil); err != nil {
+	if err := applyVariablesForTest(flowFile, &flow, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -105,7 +108,7 @@ func TestApplyGeneratedVariablesRejectsUnknownFunction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := applyVariables(flowFile, &flow, nil); err == nil {
+	if err := applyVariablesForTest(flowFile, &flow, nil); err == nil {
 		t.Fatal("expected unknown generator error")
 	}
 }
@@ -140,7 +143,7 @@ func TestApplyVariablesPreservesBodyValueTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := applyVariables(flowFile, &flow, nil); err != nil {
+	if err := applyVariablesForTest(flowFile, &flow, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -192,7 +195,7 @@ func TestApplyVariablesUsesGlobalVariables(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := applyVariables(flowFile, &flow, map[string]any{"tenantId": "tenant-1"}); err != nil {
+	if err := applyVariablesForTest(flowFile, &flow, map[string]any{"tenantId": "tenant-1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -224,7 +227,7 @@ func TestFlowVariablesOverrideGlobalVariables(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := applyVariables(flowFile, &flow, map[string]any{"tenantId": "tenant-global"}); err != nil {
+	if err := applyVariablesForTest(flowFile, &flow, map[string]any{"tenantId": "tenant-global"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -235,6 +238,153 @@ func TestFlowVariablesOverrideGlobalVariables(t *testing.T) {
 
 	if body["tenant_id"] != "tenant-flow" {
 		t.Fatalf("expected flow variable to override global variable, got %q", body["tenant_id"])
+	}
+}
+
+func TestApplyVariablesUsesSQLQueryResult(t *testing.T) {
+	flowFile := []byte(`{
+		"name": "SQL vars",
+		"vars": {
+			"merchantId": {"sql": "SELECT merchant_id FROM merchants LIMIT 1"}
+		},
+		"steps": [
+			{
+				"poll_query": "SELECT '{{merchantId}}'",
+				"message": {
+					"headers": {
+						"x-merchant-id": "{{merchantId}}"
+					},
+					"body": {"merchant_id": "{{merchantId}}"}
+				}
+			}
+		]
+	}`)
+
+	var flow models.Flow
+	if err := json.Unmarshal(flowFile, &flow); err != nil {
+		t.Fatal(err)
+	}
+
+	querySQLValue = func(ctx context.Context, query string) (any, error) {
+		if query != "SELECT merchant_id FROM merchants LIMIT 1" {
+			t.Fatalf("unexpected query %q", query)
+		}
+		return int64(42), nil
+	}
+	defer func() {
+		querySQLValue = querySQL
+	}()
+
+	if err := applyVariablesForTest(flowFile, &flow, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if flow.Steps[0].PollQuery != "SELECT '42'" {
+		t.Fatalf("expected SQL value in poll query, got %q", flow.Steps[0].PollQuery)
+	}
+	if flow.Steps[0].Message.Headers["x-merchant-id"] != "42" {
+		t.Fatalf("expected SQL value in header, got %q", flow.Steps[0].Message.Headers["x-merchant-id"])
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(flow.Steps[0].Message.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["merchant_id"] != float64(42) {
+		t.Fatalf("expected numeric SQL value in body, got %#v", body["merchant_id"])
+	}
+}
+
+func TestApplyVariablesKeepsNonSQLObjectsHardcoded(t *testing.T) {
+	flowFile := []byte(`{
+		"name": "Object vars",
+		"vars": {
+			"metadata": {"source": "flow"}
+		},
+		"steps": [
+			{
+				"message": {
+					"body": {"metadata": "{{metadata}}"}
+				}
+			}
+		]
+	}`)
+
+	var flow models.Flow
+	if err := json.Unmarshal(flowFile, &flow); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := applyVariablesForTest(flowFile, &flow, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(flow.Steps[0].Message.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	metadata, ok := body["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected hardcoded object, got %#v", body["metadata"])
+	}
+	if metadata["source"] != "flow" {
+		t.Fatalf("expected metadata source, got %#v", metadata["source"])
+	}
+}
+
+func TestNormalizeSQLVariableQuery(t *testing.T) {
+	query := "  WITH test AS (SELECT 1) SELECT * FROM test; \n"
+	want := "WITH test AS (SELECT 1) SELECT * FROM test"
+
+	if got := normalizeSQLVariableQuery(query); got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeSQLValueConvertsNumericToInt64(t *testing.T) {
+	value, err := normalizeSQLValue(pgtype.Numeric{
+		Int:   big.NewInt(42),
+		Valid: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if value != int64(42) {
+		t.Fatalf("expected normalized numeric value, got %#v", value)
+	}
+}
+
+func TestLoadFlowsDoesNotEvaluateVariables(t *testing.T) {
+	flowFile := []byte(`{
+		"name": "Lazy vars",
+		"vars": {
+			"requestId": "uuid()",
+			"merchantId": {"sql": "SELECT merchant_id FROM merchants LIMIT 1"}
+		},
+		"steps": []
+	}`)
+
+	var flow models.Flow
+	if err := json.Unmarshal(flowFile, &flow); err != nil {
+		t.Fatal(err)
+	}
+
+	rootVariables, err := flowRootVariables(flowFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow.RootVariables = rootVariables
+
+	if flow.Vars["requestId"] != "uuid()" {
+		t.Fatalf("expected unevaluated uuid, got %#v", flow.Vars["requestId"])
+	}
+	merchantID, ok := flow.Vars["merchantId"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected unevaluated SQL variable, got %#v", flow.Vars["merchantId"])
+	}
+	if merchantID["sql"] != "SELECT merchant_id FROM merchants LIMIT 1" {
+		t.Fatalf("expected unevaluated SQL query, got %#v", merchantID["sql"])
 	}
 }
 

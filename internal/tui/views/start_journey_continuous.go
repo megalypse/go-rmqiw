@@ -10,6 +10,7 @@ import (
 	"github.com/megalypse/go/rmqiw/internal/cfg"
 	poller2 "github.com/megalypse/go/rmqiw/internal/domain/impl/poller"
 	"github.com/megalypse/go/rmqiw/internal/domain/impl/publisher"
+	"github.com/megalypse/go/rmqiw/internal/domain/models"
 	"github.com/megalypse/go/rmqiw/internal/tui/colors"
 	"github.com/megalypse/go/rmqiw/internal/tui/ui"
 )
@@ -18,12 +19,16 @@ func NewStartJourneyContinuous(selectedFlow int) tea.Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	stepChan := make(chan stepReport, 1)
+	flow, err := resolveSelectedFlow(selectedFlow)
 
 	return &StartJourneyContinuous{
 		selectedFlow: selectedFlow,
+		flow:         flow,
 		spinner:      s,
 		ctx:          context.Background(),
 		stepChan:     stepChan,
+		allDone:      err != nil,
+		err:          err,
 	}
 }
 
@@ -34,6 +39,7 @@ type stepReport struct {
 
 type StartJourneyContinuous struct {
 	selectedFlow int
+	flow         *models.Flow
 	spinner      spinner.Model
 	ctx          context.Context
 	stepChan     chan stepReport
@@ -43,6 +49,10 @@ type StartJourneyContinuous struct {
 }
 
 func (s *StartJourneyContinuous) Init() tea.Cmd {
+	if s.err != nil {
+		return nil
+	}
+
 	go s.runSteps(s.ctx, s.stepChan)
 
 	return tea.Batch(s.spinner.Tick, waitForStepReport(s.stepChan))
@@ -84,6 +94,9 @@ func (s *StartJourneyContinuous) View() string {
 
 	flows, _ := cfg.GetFlows()
 	flow := flows[s.selectedFlow]
+	if s.flow != nil {
+		flow = s.flow
+	}
 
 	if s.currentStep == len(flow.Steps) {
 		render.WriteString(successIcon + " Journey completed!")
@@ -138,6 +151,9 @@ func (s *StartJourneyContinuous) runSteps(ctx context.Context, reportChan chan<-
 
 	flows, _ := cfg.GetFlows()
 	flow := flows[s.selectedFlow]
+	if s.flow != nil {
+		flow = s.flow
+	}
 
 	rmq, err := publisher.GetRmq()
 	if err != nil {

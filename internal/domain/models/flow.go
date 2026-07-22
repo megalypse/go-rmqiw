@@ -3,11 +3,12 @@ package models
 import "time"
 
 type Flow struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Vars        map[string]any `json:"vars"`
-	Variables   map[string]any `json:"variables"`
-	Steps       []FlowStep     `json:"steps"`
+	Name          string         `json:"name"`
+	Description   string         `json:"description"`
+	Vars          map[string]any `json:"vars"`
+	Variables     map[string]any `json:"variables"`
+	RootVariables map[string]any `json:"-"`
+	Steps         []FlowStep     `json:"steps"`
 }
 
 type FlowStep struct {

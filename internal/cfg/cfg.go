@@ -1,14 +1,21 @@
 package cfg
 
 import (
+	"context"
 	"crypto/rand"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/megalypse/go/rmqiw/internal/domain/models"
 )
 
@@ -25,6 +32,8 @@ var generatorFns = map[string]func() any{
 	"uuid": generateUUID,
 }
 
+var querySQLValue = querySQL
+
 func loadFlows() ([]*models.Flow, error) {
 	paths, err := getPaths()
 	if err != nil {
@@ -32,16 +41,6 @@ func loadFlows() ([]*models.Flow, error) {
 	}
 
 	entries, err := os.ReadDir(paths.flowsPath)
-	if err != nil {
-		return nil, err
-	}
-
-	cfg, err := GetCfg()
-	if err != nil {
-		return nil, err
-	}
-
-	globalValues, err := evaluateVariables(configVariables(cfg))
 	if err != nil {
 		return nil, err
 	}
@@ -63,9 +62,11 @@ func loadFlows() ([]*models.Flow, error) {
 			return nil, err
 		}
 
-		if err := applyVariables(flowFile, &flow, globalValues); err != nil {
+		rootVariables, err := flowRootVariables(flowFile)
+		if err != nil {
 			return nil, err
 		}
+		flow.RootVariables = rootVariables
 
 		flows = append(flows, &flow)
 	}
@@ -73,11 +74,58 @@ func loadFlows() ([]*models.Flow, error) {
 	return flows, nil
 }
 
-func applyVariables(flowFile []byte, flow *models.Flow, globalValues map[string]any) error {
-	flowVars, err := flowVariableDefinitions(flowFile, flow)
+func ResolveFlow(flow *models.Flow) (*models.Flow, error) {
+	resolvedFlow, err := cloneFlow(flow)
 	if err != nil {
-		return err
+		return nil, err
 	}
+
+	cfg, err := GetCfg()
+	if err != nil {
+		return nil, err
+	}
+
+	globalValues, err := evaluateVariables(configVariables(cfg))
+	if err != nil {
+		return nil, err
+	}
+
+	if err := applyVariables(resolvedFlow, globalValues); err != nil {
+		return nil, err
+	}
+
+	return resolvedFlow, nil
+}
+
+func cloneFlow(flow *models.Flow) (*models.Flow, error) {
+	flowBytes, err := json.Marshal(flow)
+	if err != nil {
+		return nil, err
+	}
+
+	var cloned models.Flow
+	if err := json.Unmarshal(flowBytes, &cloned); err != nil {
+		return nil, err
+	}
+
+	cloned.RootVariables = cloneMap(flow.RootVariables)
+	return &cloned, nil
+}
+
+func cloneMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string]any, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func applyVariables(flow *models.Flow, globalValues map[string]any) error {
+	flowVars := flowVariableDefinitions(flow)
 
 	values := make(map[string]any, len(globalValues)+len(flowVars))
 	for name, value := range globalValues {
@@ -98,6 +146,38 @@ func applyVariables(flowFile []byte, flow *models.Flow, globalValues map[string]
 	return nil
 }
 
+func flowRootVariables(flowFile []byte) (map[string]any, error) {
+	var rawRoot map[string]json.RawMessage
+	if err := json.Unmarshal(flowFile, &rawRoot); err != nil {
+		return nil, err
+	}
+
+	rootVariables := make(map[string]any)
+	for name, rawValue := range rawRoot {
+		if isKnownFlowField(name) {
+			continue
+		}
+
+		var value any
+		if err := json.Unmarshal(rawValue, &value); err != nil {
+			return nil, err
+		}
+		rootVariables[name] = value
+	}
+
+	return rootVariables, nil
+}
+
+func applyVariablesForTest(flowFile []byte, flow *models.Flow, globalValues map[string]any) error {
+	rootVariables, err := flowRootVariables(flowFile)
+	if err != nil {
+		return err
+	}
+	flow.RootVariables = rootVariables
+
+	return applyVariables(flow, globalValues)
+}
+
 func configVariables(cfg *Config) map[string]any {
 	vars := make(map[string]any, len(cfg.Vars)+len(cfg.Variables))
 	for name, value := range cfg.Vars {
@@ -109,7 +189,7 @@ func configVariables(cfg *Config) map[string]any {
 	return vars
 }
 
-func flowVariableDefinitions(flowFile []byte, flow *models.Flow) (map[string]any, error) {
+func flowVariableDefinitions(flow *models.Flow) map[string]any {
 	vars := make(map[string]any)
 	for name, value := range flow.Vars {
 		vars[name] = value
@@ -117,25 +197,11 @@ func flowVariableDefinitions(flowFile []byte, flow *models.Flow) (map[string]any
 	for name, value := range flow.Variables {
 		vars[name] = value
 	}
-
-	var rawRoot map[string]json.RawMessage
-	if err := json.Unmarshal(flowFile, &rawRoot); err != nil {
-		return nil, err
-	}
-
-	for name, rawValue := range rawRoot {
-		if isKnownFlowField(name) {
-			continue
-		}
-
-		var value any
-		if err := json.Unmarshal(rawValue, &value); err != nil {
-			return nil, err
-		}
+	for name, value := range flow.RootVariables {
 		vars[name] = value
 	}
 
-	return vars, nil
+	return vars
 }
 
 func isKnownFlowField(name string) bool {
@@ -162,11 +228,16 @@ func evaluateVariables(vars map[string]any) (map[string]any, error) {
 
 func evaluateVariable(value any) (any, error) {
 	expression, ok := value.(string)
-	if !ok {
-		return value, nil
+	if ok {
+		return evaluateGenerator(expression)
 	}
 
-	return evaluateGenerator(expression)
+	query, ok := sqlQuery(value)
+	if ok {
+		return querySQLValue(context.Background(), query)
+	}
+
+	return value, nil
 }
 
 func evaluateGenerator(expression string) (any, error) {
@@ -279,6 +350,142 @@ func stringifyVariable(value any) string {
 	default:
 		return fmt.Sprint(typedValue)
 	}
+}
+
+func sqlQuery(value any) (string, bool) {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return "", false
+	}
+
+	query, ok := object["sql"].(string)
+	return query, ok && query != ""
+}
+
+func querySQL(ctx context.Context, query string) (any, error) {
+	query = normalizeSQLVariableQuery(query)
+
+	config, err := GetCfg()
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := pgx.Connect(ctx, postgresURL(config.Postgres))
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close(ctx)
+
+	rows, err := conn.Query(ctx, query, pgx.QueryExecModeSimpleProtocol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute SQL variable query %q: %w", query, err)
+	}
+	defer rows.Close()
+
+	if len(rows.FieldDescriptions()) != 1 {
+		return nil, fmt.Errorf("sql variable query must return exactly 1 column: %q", query)
+	}
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("failed to read SQL variable query %q: %w", query, err)
+		}
+		return nil, fmt.Errorf("sql variable query returned no rows: %q: %w", query, pgx.ErrNoRows)
+	}
+
+	values, err := rows.Values()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read SQL variable query %q: %w", query, err)
+	}
+
+	if rows.Next() {
+		return nil, fmt.Errorf("sql variable query must return exactly 1 row: %q", query)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read SQL variable query %q: %w", query, err)
+	}
+
+	value, err := normalizeSQLValue(values[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to normalize SQL variable query %q: %w", query, err)
+	}
+
+	return value, nil
+}
+
+func normalizeSQLVariableQuery(query string) string {
+	return strings.TrimRight(strings.TrimSpace(query), "; \t\r\n")
+}
+
+func normalizeSQLValue(value any) (any, error) {
+	if numeric, ok := value.(pgtype.Numeric); ok {
+		return normalizeSQLNumeric(numeric)
+	}
+
+	if valuer, ok := value.(driver.Valuer); ok {
+		driverValue, err := valuer.Value()
+		if err != nil {
+			return nil, err
+		}
+		return normalizeSQLValue(driverValue)
+	}
+
+	switch typedValue := value.(type) {
+	case []byte:
+		return string(typedValue), nil
+	default:
+		return value, nil
+	}
+}
+
+func normalizeSQLNumeric(value pgtype.Numeric) (any, error) {
+	if !value.Valid {
+		return nil, nil
+	}
+
+	intValue, err := value.Int64Value()
+	if err == nil && intValue.Valid {
+		return intValue.Int64, nil
+	}
+
+	floatValue, err := value.Float64Value()
+	if err != nil {
+		return nil, err
+	}
+	if !floatValue.Valid {
+		return nil, nil
+	}
+
+	return floatValue.Float64, nil
+}
+
+func postgresURL(config PostgresConfig) string {
+	port := config.Port
+	if port == 0 {
+		port = 5432
+	}
+
+	sslMode := config.SSLMode
+	if sslMode == "" {
+		sslMode = "disable"
+	}
+
+	uri := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(config.User, config.Password),
+		Host:   net.JoinHostPort(config.Host, strconv.Itoa(port)),
+	}
+
+	if config.Database != "" {
+		uri.Path = config.Database
+	}
+
+	query := uri.Query()
+	query.Set("sslmode", sslMode)
+	query.Set("default_transaction_read_only", "on")
+	uri.RawQuery = query.Encode()
+
+	return uri.String()
 }
 
 func generateUUID() any {

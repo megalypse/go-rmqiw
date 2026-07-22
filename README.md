@@ -59,7 +59,10 @@ export RMQIW_PATH="$HOME/dev/rmqiw"
 ```json
 {
   "vars": {
-    "tenantId": "tenant-1"
+    "tenantId": "tenant-1",
+    "merchantId": {
+      "sql": "SELECT id FROM merchants LIMIT 1"
+    }
   },
   "postgres": {
     "host": "localhost",
@@ -167,7 +170,10 @@ Flows podem declarar variáveis geradas na raiz do arquivo:
   "vars": {
     "requestId": "uuid()",
     "tenantId": "tenant-1",
-    "retryCount": 3
+    "retryCount": 3,
+    "merchantId": {
+      "sql": "SELECT id FROM merchants LIMIT 1"
+    }
   },
   "steps": [
     {
@@ -180,7 +186,8 @@ Flows podem declarar variáveis geradas na raiz do arquivo:
         "body": {
           "id": "{{requestId}}",
           "tenant_id": "{{tenantId}}",
-          "retry_count": "{{retryCount}}"
+          "retry_count": "{{retryCount}}",
+          "merchant_id": "{{merchantId}}"
         }
       }
     }
@@ -190,6 +197,7 @@ Flows podem declarar variáveis geradas na raiz do arquivo:
 
 O sufixo `()` indica uma chamada de função geradora. Valores sem `()` são literais hardcoded e podem ser strings, números, booleanos, objetos, arrays ou `null`.
 As mesmas variáveis também podem ser definidas globalmente no `config.json` usando `vars`; variáveis do flow sobrescrevem variáveis globais com o mesmo nome.
+Uma variável também pode vir de SQL usando `{"sql": "SELECT ..."}`. Essa query deve retornar exatamente uma linha e uma coluna; o valor dessa coluna vira o valor da variável.
 O valor pode ser usado com `{{nomeDaVar}}` em `message.body`, `message.headers` e `poll_query`. Quando um campo do body é exatamente `{{nomeDaVar}}`, o tipo original é preservado. A função disponível inicialmente é `uuid()`.
 Também é aceito declarar a variável diretamente na raiz, por exemplo `"requestId": "uuid()"`.
 
