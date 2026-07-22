@@ -19,11 +19,12 @@ func NewStartJourneyContinuous(selectedFlow int) tea.Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	stepChan := make(chan stepReport, 1)
-	flow, err := resolveSelectedFlow(selectedFlow)
+	flow, profile, err := resolveSelectedFlow(selectedFlow)
 
 	return &StartJourneyContinuous{
 		selectedFlow: selectedFlow,
 		flow:         flow,
+		profile:      profile,
 		spinner:      s,
 		ctx:          context.Background(),
 		stepChan:     stepChan,
@@ -40,6 +41,7 @@ type stepReport struct {
 type StartJourneyContinuous struct {
 	selectedFlow int
 	flow         *models.Flow
+	profile      *cfg.Config
 	spinner      spinner.Model
 	ctx          context.Context
 	stepChan     chan stepReport
@@ -155,13 +157,13 @@ func (s *StartJourneyContinuous) runSteps(ctx context.Context, reportChan chan<-
 		flow = s.flow
 	}
 
-	rmq, err := publisher.GetRmq()
+	rmq, err := publisher.GetRmqForConfig(s.profile)
 	if err != nil {
 		reportChan <- stepReport{err: err}
 		return
 	}
 
-	poller, err := poller2.GetPsql(ctx)
+	poller, err := poller2.GetPsqlForConfig(ctx, s.profile)
 	if err != nil {
 		reportChan <- stepReport{err: err}
 		return

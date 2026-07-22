@@ -5,36 +5,64 @@ import (
 	"net"
 	"net/url"
 	"strconv"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/megalypse/go/rmqiw/internal/cfg"
 	"github.com/megalypse/go/rmqiw/internal/domain/interfaces"
 )
 
-var pollerPsql interfaces.Poller
+var (
+	pollerMu      sync.Mutex
+	pollerPsql    interfaces.Poller
+	pollerProfile *cfg.Config
+)
 
 func GetPsql(ctx context.Context) (interfaces.Poller, error) {
-	var err error
-	if pollerPsql == nil {
-		pollerPsql, err = newPollerPsql(ctx)
-		if err != nil {
-			return nil, err
-		}
+	config, err := cfg.GetCfg()
+	if err != nil {
+		return nil, err
+	}
+	return GetPsqlForConfig(ctx, config)
+}
+
+func GetPsqlForConfig(ctx context.Context, config *cfg.Config) (interfaces.Poller, error) {
+	pollerMu.Lock()
+	defer pollerMu.Unlock()
+
+	if pollerPsql != nil && pollerProfile == config {
+		return pollerPsql, nil
 	}
 
-	return pollerPsql, err
+	next, err := newPollerPsql(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	if current, ok := pollerPsql.(*psql); ok {
+		_ = current.Close(ctx)
+	}
+	pollerPsql = next
+	pollerProfile = config
+
+	return pollerPsql, nil
+}
+
+func CheckConnection(ctx context.Context, config *cfg.Config) error {
+	conn, err := pgx.Connect(ctx, postgresURL(config.Postgres))
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+
+	return conn.Ping(ctx)
 }
 
 type psql struct {
 	conn *pgx.Conn
 }
 
-func newPollerPsql(ctx context.Context) (interfaces.Poller, error) {
-	config, err := cfg.GetCfg()
-	if err != nil {
-		return nil, err
-	}
-
+func newPollerPsql(ctx context.Context, config *cfg.Config) (interfaces.Poller, error) {
 	conn, err := pgx.Connect(ctx, postgresURL(config.Postgres))
 	if err != nil {
 		return nil, err

@@ -12,19 +12,57 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-var GetRmq = sync.OnceValues(newPublisherRMQ)
+var (
+	publisherMu      sync.Mutex
+	publisherRMQ     interfaces.Publisher
+	publisherProfile *cfg.Config
+)
+
+func GetRmq() (interfaces.Publisher, error) {
+	config, err := cfg.GetCfg()
+	if err != nil {
+		return nil, err
+	}
+	return GetRmqForConfig(config)
+}
+
+func GetRmqForConfig(config *cfg.Config) (interfaces.Publisher, error) {
+	publisherMu.Lock()
+	defer publisherMu.Unlock()
+
+	if publisherRMQ != nil && publisherProfile == config {
+		return publisherRMQ, nil
+	}
+
+	next, err := newPublisherRMQ(config)
+	if err != nil {
+		return nil, err
+	}
+
+	if current, ok := publisherRMQ.(*PublisherRMQ); ok {
+		_ = current.Close()
+	}
+	publisherRMQ = next
+	publisherProfile = config
+
+	return publisherRMQ, nil
+}
+
+func CheckConnection(config *cfg.Config) error {
+	conn, err := amqp.Dial(rabbitMQURL(config.RabbitMQ))
+	if err != nil {
+		return err
+	}
+
+	return conn.Close()
+}
 
 type PublisherRMQ struct {
 	conn    *amqp.Connection
 	channel *amqp.Channel
 }
 
-func newPublisherRMQ() (interfaces.Publisher, error) {
-	config, err := cfg.GetCfg()
-	if err != nil {
-		return nil, err
-	}
-
+func newPublisherRMQ(config *cfg.Config) (interfaces.Publisher, error) {
 	conn, err := amqp.Dial(rabbitMQURL(config.RabbitMQ))
 	if err != nil {
 		return nil, err
@@ -74,7 +112,11 @@ func (p *PublisherRMQ) Close() error {
 func rabbitMQURL(config cfg.RabbitMQConfig) string {
 	port := config.Port
 	if port == 0 {
-		port = 5672
+		if config.TLS {
+			port = 5671
+		} else {
+			port = 5672
+		}
 	}
 
 	vhost := config.VHost
@@ -82,8 +124,13 @@ func rabbitMQURL(config cfg.RabbitMQConfig) string {
 		vhost = "/"
 	}
 
+	scheme := "amqp"
+	if config.TLS {
+		scheme = "amqps"
+	}
+
 	uri := url.URL{
-		Scheme: "amqp",
+		Scheme: scheme,
 		User:   url.UserPassword(config.User, config.Password),
 		Host:   net.JoinHostPort(config.Host, strconv.Itoa(port)),
 		Path:   vhost,

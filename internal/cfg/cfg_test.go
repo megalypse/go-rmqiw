@@ -5,11 +5,90 @@ import (
 	"encoding/json"
 	"math/big"
 	"regexp"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/megalypse/go/rmqiw/internal/domain/models"
 )
+
+func TestParseProfiles(t *testing.T) {
+	profiles, err := parseProfiles([]byte(`[
+		{"name":" local ","postgres":{"host":"localhost"}},
+		{"name":"staging","rabbitmq":{"host":"rabbitmq.staging"}}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(profiles) != 2 {
+		t.Fatalf("expected 2 profiles, got %d", len(profiles))
+	}
+	if profiles[0].Name != "local" {
+		t.Fatalf("expected trimmed profile name, got %q", profiles[0].Name)
+	}
+	if profiles[1].RabbitMQ.Host != "rabbitmq.staging" {
+		t.Fatalf("expected staging RabbitMQ host, got %q", profiles[1].RabbitMQ.Host)
+	}
+}
+
+func TestParseProfilesRejectsInvalidConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{name: "object", config: `{}`, wantErr: "array of profiles"},
+		{name: "empty", config: `[]`, wantErr: "at least one profile"},
+		{name: "missing name", config: `[{"postgres":{}}]`, wantErr: "must have a name"},
+		{name: "null profile", config: `[null]`, wantErr: "must be an object"},
+		{name: "duplicate name", config: `[{"name":"local"},{"name":"local"}]`, wantErr: "is duplicated"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseProfiles([]byte(tt.config))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestNextProfileCyclesThroughProfiles(t *testing.T) {
+	originalGetProfiles := getProfiles
+	defer func() {
+		getProfiles = originalGetProfiles
+		profileSelection.Lock()
+		profileSelection.index = 0
+		profileSelection.Unlock()
+	}()
+
+	profiles := []*Config{{Name: "local"}, {Name: "staging"}}
+	getProfiles = sync.OnceValues(func() ([]*Config, error) {
+		return profiles, nil
+	})
+	profileSelection.Lock()
+	profileSelection.index = 0
+	profileSelection.Unlock()
+
+	profile, err := NextProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Name != "staging" {
+		t.Fatalf("expected staging profile, got %q", profile.Name)
+	}
+
+	profile, err = NextProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Name != "local" {
+		t.Fatalf("expected profile selection to wrap to local, got %q", profile.Name)
+	}
+}
 
 func TestApplyGeneratedVariablesFromVars(t *testing.T) {
 	flowFile := []byte(`{

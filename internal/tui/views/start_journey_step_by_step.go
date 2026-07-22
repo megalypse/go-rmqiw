@@ -18,11 +18,12 @@ import (
 func NewStartJourneyStepByStep(selectedFlow int) tea.Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	flow, err := resolveSelectedFlow(selectedFlow)
+	flow, profile, err := resolveSelectedFlow(selectedFlow)
 
 	return &StartJourneyStepByStep{
 		selectedFlow: selectedFlow,
 		flow:         flow,
+		profile:      profile,
 		spinner:      s,
 		ctx:          context.Background(),
 		stepChan:     make(chan stepReport, 1),
@@ -33,6 +34,7 @@ func NewStartJourneyStepByStep(selectedFlow int) tea.Model {
 type StartJourneyStepByStep struct {
 	selectedFlow int
 	flow         *models.Flow
+	profile      *cfg.Config
 	spinner      spinner.Model
 	ctx          context.Context
 	stepChan     chan stepReport
@@ -155,13 +157,13 @@ func (s *StartJourneyStepByStep) runCurrentStep(ctx context.Context, reportChan 
 		flow = s.flow
 	}
 
-	rmq, err := publisher.GetRmq()
+	rmq, err := publisher.GetRmqForConfig(s.profile)
 	if err != nil {
 		reportChan <- stepReport{stepNum: stepNum, err: err}
 		return
 	}
 
-	poller, err := poller2.GetPsql(ctx)
+	poller, err := poller2.GetPsqlForConfig(ctx, s.profile)
 	if err != nil {
 		reportChan <- stepReport{stepNum: stepNum, err: err}
 		return

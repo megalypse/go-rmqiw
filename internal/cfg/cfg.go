@@ -24,9 +24,14 @@ type cfgFlowsPaths struct {
 	flowsPath string
 }
 
-var GetCfg = sync.OnceValues(loadCfg)
 var GetFlows = sync.OnceValues(loadFlows)
 var getPaths = sync.OnceValues(loadPaths)
+var getProfiles = sync.OnceValues(loadProfiles)
+
+var profileSelection struct {
+	sync.RWMutex
+	index int
+}
 
 var generatorFns = map[string]func() any{
 	"uuid": generateUUID,
@@ -75,12 +80,17 @@ func loadFlows() ([]*models.Flow, error) {
 }
 
 func ResolveFlow(flow *models.Flow) (*models.Flow, error) {
-	resolvedFlow, err := cloneFlow(flow)
+	cfg, err := GetCfg()
 	if err != nil {
 		return nil, err
 	}
+	return ResolveFlowWithConfig(flow, cfg)
+}
 
-	cfg, err := GetCfg()
+// ResolveFlowWithConfig resolves a flow using a fixed profile snapshot. This
+// keeps an in-progress journey on the profile with which it was started.
+func ResolveFlowWithConfig(flow *models.Flow, cfg *Config) (*models.Flow, error) {
+	resolvedFlow, err := cloneFlow(flow)
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +105,34 @@ func ResolveFlow(flow *models.Flow) (*models.Flow, error) {
 	}
 
 	return resolvedFlow, nil
+}
+
+// GetCfg returns the currently selected configuration profile.
+func GetCfg() (*Config, error) {
+	profiles, err := getProfiles()
+	if err != nil {
+		return nil, err
+	}
+
+	profileSelection.RLock()
+	defer profileSelection.RUnlock()
+
+	return profiles[profileSelection.index], nil
+}
+
+// NextProfile selects and returns the next configuration profile, wrapping at
+// the end of the list.
+func NextProfile() (*Config, error) {
+	profiles, err := getProfiles()
+	if err != nil {
+		return nil, err
+	}
+
+	profileSelection.Lock()
+	defer profileSelection.Unlock()
+
+	profileSelection.index = (profileSelection.index + 1) % len(profiles)
+	return profiles[profileSelection.index], nil
 }
 
 func cloneFlow(flow *models.Flow) (*models.Flow, error) {
@@ -500,7 +538,7 @@ func generateUUID() any {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", bytes[0:4], bytes[4:6], bytes[6:8], bytes[8:10], bytes[10:16])
 }
 
-func loadCfg() (*Config, error) {
+func loadProfiles() ([]*Config, error) {
 	cfgPaths, err := getPaths()
 	if err != nil {
 		return nil, err
@@ -511,15 +549,45 @@ func loadCfg() (*Config, error) {
 		return nil, err
 	}
 
-	var cfg Config
-	err = json.Unmarshal(cfgFile, &cfg)
+	profiles, err := parseProfiles(cfgFile)
 	if err != nil {
 		return nil, err
 	}
 
-	applyEnvOverrides(&cfg)
+	for _, profile := range profiles {
+		applyEnvOverrides(profile)
+	}
 
-	return &cfg, nil
+	return profiles, nil
+}
+
+func parseProfiles(cfgFile []byte) ([]*Config, error) {
+	var profiles []*Config
+	if err := json.Unmarshal(cfgFile, &profiles); err != nil {
+		return nil, fmt.Errorf("config must be an array of profiles: %w", err)
+	}
+
+	if len(profiles) == 0 {
+		return nil, fmt.Errorf("config must contain at least one profile")
+	}
+
+	names := make(map[string]struct{}, len(profiles))
+	for i, profile := range profiles {
+		if profile == nil {
+			return nil, fmt.Errorf("config profile at index %d must be an object", i)
+		}
+
+		profile.Name = strings.TrimSpace(profile.Name)
+		if profile.Name == "" {
+			return nil, fmt.Errorf("config profile at index %d must have a name", i)
+		}
+		if _, exists := names[profile.Name]; exists {
+			return nil, fmt.Errorf("config profile name %q is duplicated", profile.Name)
+		}
+		names[profile.Name] = struct{}{}
+	}
+
+	return profiles, nil
 }
 
 func applyEnvOverrides(cfg *Config) {
@@ -535,6 +603,7 @@ func applyEnvOverrides(cfg *Config) {
 	applyStringEnv("RMQIW_RABBITMQ_USER", &cfg.RabbitMQ.User)
 	applyStringEnv("RMQIW_RABBITMQ_PASSWORD", &cfg.RabbitMQ.Password)
 	applyStringEnv("RMQIW_RABBITMQ_VHOST", &cfg.RabbitMQ.VHost)
+	applyBoolEnv("RMQIW_RABBITMQ_TLS", &cfg.RabbitMQ.TLS)
 }
 
 func applyStringEnv(name string, value *string) {
@@ -554,6 +623,20 @@ func applyIntEnv(name string, value *int) {
 
 	var parsed int
 	if _, err := fmt.Sscanf(envValue, "%d", &parsed); err != nil {
+		return
+	}
+
+	*value = parsed
+}
+
+func applyBoolEnv(name string, value *bool) {
+	envValue := os.Getenv(name)
+	if envValue == "" {
+		return
+	}
+
+	parsed, err := strconv.ParseBool(envValue)
+	if err != nil {
 		return
 	}
 

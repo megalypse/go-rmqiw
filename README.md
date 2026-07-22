@@ -57,30 +57,36 @@ export RMQIW_PATH="$HOME/dev/rmqiw"
 ## `config.json`
 
 ```json
-{
-  "vars": {
-    "tenantId": "tenant-1",
-    "merchantId": {
-      "sql": "SELECT id FROM merchants LIMIT 1"
+[
+  {
+    "name": "local",
+    "vars": {
+      "tenantId": "tenant-1",
+      "merchantId": {
+        "sql": "SELECT id FROM merchants LIMIT 1"
+      }
+    },
+    "postgres": {
+      "host": "localhost",
+      "port": 5432,
+      "user": "rmqiw",
+      "password": "rmqiw",
+      "database": "rmqiw",
+      "ssl_mode": "disable"
+    },
+    "rabbitmq": {
+      "host": "localhost",
+      "port": 5672,
+      "user": "rmqiw",
+      "password": "rmqiw",
+      "vhost": "/",
+      "tls": false
     }
-  },
-  "postgres": {
-    "host": "localhost",
-    "port": 5432,
-    "user": "rmqiw",
-    "password": "rmqiw",
-    "database": "rmqiw",
-    "ssl_mode": "disable"
-  },
-  "rabbitmq": {
-    "host": "localhost",
-    "port": 5672,
-    "user": "rmqiw",
-    "password": "rmqiw",
-    "vhost": "/"
   }
-}
+]
 ```
+
+O arquivo é um array de perfis. Cada perfil mantém os mesmos campos de configuração e deve ter um `name` único. O primeiro perfil é selecionado ao iniciar a aplicação; use `Shift+Tab` para avançar para o próximo.
 
 Também é possível sobrescrever conexão por env vars:
 
@@ -97,7 +103,10 @@ RMQIW_RABBITMQ_PORT=5672
 RMQIW_RABBITMQ_USER=rmqiw
 RMQIW_RABBITMQ_PASSWORD=rmqiw
 RMQIW_RABBITMQ_VHOST=/
+RMQIW_RABBITMQ_TLS=false
 ```
+
+Defina `rabbitmq.tls` como `true` para usar `amqps://`. Quando `port` for omitida, são usadas as portas padrão `5672` sem TLS e `5671` com TLS; uma porta configurada explicitamente sempre é preservada.
 
 ## Adicionar Flows
 
@@ -211,7 +220,10 @@ Na TUI:
 
 - `up` / `down`: navegar;
 - `enter`: selecionar ou continuar;
+- `shift+tab`: trocar para o próximo perfil de configuração;
 - `esc`: sair.
+
+Ao lado do nome do perfil, `✓` indica que Postgres e RabbitMQ estão acessíveis, `◌` indica que a verificação está em andamento e `✗` indica falha em pelo menos uma das conexões. Em caso de falha, o erro de conexão é exibido no lugar da lista de jornadas.
 
 Ritmos:
 

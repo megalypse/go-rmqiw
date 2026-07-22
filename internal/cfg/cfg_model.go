@@ -1,6 +1,7 @@
 package cfg
 
 type Config struct {
+	Name      string         `json:"name"`
 	Postgres  PostgresConfig `json:"postgres"`
 	RabbitMQ  RabbitMQConfig `json:"rabbitmq"`
 	Vars      map[string]any `json:"vars"`
@@ -22,4 +23,5 @@ type RabbitMQConfig struct {
 	User     string `json:"user"`
 	Password string `json:"password"`
 	VHost    string `json:"vhost"`
+	TLS      bool   `json:"tls"`
 }

@@ -9,13 +9,19 @@ import (
 	"github.com/megalypse/go/rmqiw/internal/domain/models"
 )
 
-func resolveSelectedFlow(selectedFlow int) (*models.Flow, error) {
+func resolveSelectedFlow(selectedFlow int) (*models.Flow, *cfg.Config, error) {
 	flows, err := cfg.GetFlows()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return cfg.ResolveFlow(flows[selectedFlow])
+	profile, err := cfg.GetCfg()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	flow, err := cfg.ResolveFlowWithConfig(flows[selectedFlow], profile)
+	return flow, profile, err
 }
 
 func runJourneyStep(
